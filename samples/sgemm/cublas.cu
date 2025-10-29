@@ -38,7 +38,7 @@ int main() {
         const float alpha = 1.0f;
         const float beta = 0.0f;
 
-        constexpr cublasGemmAlgo_t algo = CUBLAS_GEMM_ALGO0;
+        constexpr cublasGemmAlgo_t algo = CUBLAS_GEMM_AUTOTUNE;
 
         for (int i = 0; i < HEATUP_TIMES; i++) {
             cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, deviceB, CUDA_R_32F,

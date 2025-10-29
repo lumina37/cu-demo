@@ -213,7 +213,7 @@ void runCublas(cublasHandle_t handle, int M, int N, int K, float alpha,
 }
 
 
-void runMySgemm(int M, int N, int K, float alpha, float* A, float* B, float beta, float* C) {
+void runMySgemm(int M, int N, int K, float* A, float* B, float* C) {
     constexpr uint32_t BM = 128;
     constexpr uint32_t BN = 64;
     constexpr uint32_t BK = 16;
@@ -251,69 +251,59 @@ bool verifyMat(float* matRef, float* matOut, int N) {
     return true;
 }
 
-int main(int argc, char** argv) {
+int main() {
     cublasHandle_t handle;
-    if (cublasCreate(&handle)) {
-        std::cerr << "Create cublas handle error." << std::endl;
-        exit(EXIT_FAILURE);
-    }
+    cublasCreate(&handle);
 
     cudaEvent_t evBegin, evEnd;
     cudaEventCreate(&evBegin);
     cudaEventCreate(&evEnd);
 
-    // cuBLAS FLOPs ceiling is reached at 8192
-    std::array SIZES{2048, 3072, 4096};
+    constexpr std::array SIZES{2048, 3072, 4096};
 
-    int64_t m, n, k;
-    int64_t max_size = SIZES.back();
-    std::cout << "Max size: " << max_size << std::endl;
+    int M, N, K;
+    const int maxSize = SIZES.back();
 
-    float alpha = 1.0, beta = 0.0; // GEMM input parameters, C=α*AB+β*C
+    const float alpha = 1.0, beta = 0.0;
 
-    float *A = nullptr, *B = nullptr, *C = nullptr, *C_ref = nullptr;
-    float *dA = nullptr, *dB = nullptr, *dC = nullptr, *dC_ref = nullptr;
+    float *deviceA = nullptr, *deviceB = nullptr, *deviceC = nullptr, *deviceCRef = nullptr;
 
-    A = (float*)malloc(sizeof(float) * max_size * max_size);
-    B = (float*)malloc(sizeof(float) * max_size * max_size);
-    C = (float*)malloc(sizeof(float) * max_size * max_size);
-    C_ref = (float*)malloc(sizeof(float) * max_size * max_size);
+    std::vector<float> hostA(maxSize * maxSize);
+    std::vector<float> hostB(maxSize * maxSize);
+    std::vector<float> hostC(maxSize * maxSize);
+    std::vector<float> hostCRef(maxSize * maxSize);
 
-    randomizeMat(A, max_size * max_size);
-    randomizeMat(B, max_size * max_size);
-    randomizeMat(C, max_size * max_size);
+    randomizeMat(hostA.data(), maxSize * maxSize);
+    randomizeMat(hostB.data(), maxSize * maxSize);
 
-    CHECK_CUDA(cudaMalloc((void**)&dA, sizeof(float) * max_size * max_size));
-    CHECK_CUDA(cudaMalloc((void**)&dB, sizeof(float) * max_size * max_size));
-    CHECK_CUDA(cudaMalloc((void**)&dC, sizeof(float) * max_size * max_size));
-    CHECK_CUDA(cudaMalloc((void**)&dC_ref, sizeof(float) * max_size * max_size));
+    cudaMalloc(&deviceA, sizeof(float) * maxSize * maxSize);
+    cudaMalloc(&deviceB, sizeof(float) * maxSize * maxSize);
+    cudaMalloc(&deviceC, sizeof(float) * maxSize * maxSize);
+    cudaMalloc(&deviceCRef, sizeof(float) * maxSize * maxSize);
 
-    CHECK_CUDA(cudaMemcpy(dA, A, sizeof(float) * max_size * max_size, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(dB, B, sizeof(float) * max_size * max_size, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(dC, C, sizeof(float) * max_size * max_size, cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(dC_ref, C, sizeof(float) * max_size * max_size, cudaMemcpyHostToDevice));
+    cudaMemcpy(deviceA, hostA.data(), sizeof(float) * maxSize * maxSize, cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceB, hostB.data(), sizeof(float) * maxSize * maxSize, cudaMemcpyHostToDevice);
 
-    int64_t PERF_TIMES = 1;
-    for (int size : SIZES) {
-        m = n = k = size;
-        runCublas(handle, m, n, k, alpha, dA, dB, beta, dC_ref);
-        runMySgemm(m, n, k, alpha, dA, dB, beta, dC);
-        CHECK_CUDA(cudaDeviceSynchronize());
-        CHECK_CUDA(cudaGetLastError()); // Check for async errors during kernel run
-        cudaMemcpy(C, dC, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
-        cudaMemcpy(C_ref, dC_ref, sizeof(float) * m * n, cudaMemcpyDeviceToHost);
+    const int PERF_TIMES = 3;
+    for (const int size : SIZES) {
+        M = N = K = size;
+        runCublas(handle, M, N, K, alpha, deviceA, deviceB, beta, deviceCRef);
+        runMySgemm(M, N, K, deviceA, deviceB, deviceC);
+        cudaDeviceSynchronize();
 
-        if (!verifyMat(C_ref, C, m * n)) {
+        cudaMemcpy(hostC.data(), deviceC, sizeof(float) * M * N, cudaMemcpyDeviceToHost);
+        cudaMemcpy(hostCRef.data(), deviceCRef, sizeof(float) * M * N, cudaMemcpyDeviceToHost);
+
+        if (!verifyMat(hostCRef.data(), hostC.data(), M * N)) {
             std::cout << "verification failed" << std::endl;
             exit(EXIT_FAILURE);
         }
 
         std::vector<float> elapsedTimes;
-        for (int j = 0; j < PERF_TIMES; j++) {
+        for (int i = 0; i < PERF_TIMES; i++) {
             cudaEventRecord(evBegin);
-            runMySgemm(m, n, k, alpha, dA, dB, beta, dC);
+            runMySgemm(M, N, K, deviceA, deviceB, deviceC);
             cudaEventRecord(evEnd);
-            cudaEventSynchronize(evBegin);
             cudaEventSynchronize(evEnd);
             float elapsedTime;
             cudaEventElapsedTime(&elapsedTime, evBegin, evEnd);
@@ -321,7 +311,7 @@ int main(int argc, char** argv) {
         }
 
         const auto [meanTime, stdTime] = meanStd(elapsedTimes);
-        const float macs = (float)m * n * k * 2;
+        const float macs = (float)M * N * K * 2;
         const float meanTflops = macs / meanTime / 1e9;
 
         std::cout << "=============================" << std::endl;
@@ -330,15 +320,9 @@ int main(int argc, char** argv) {
     }
 
     // Free up CPU and GPU space
-    free(A);
-    free(B);
-    free(C);
-    free(C_ref);
-    cudaFree(dA);
-    cudaFree(dB);
-    cudaFree(dC);
-    cudaFree(dC_ref);
+    cudaFree(deviceA);
+    cudaFree(deviceB);
+    cudaFree(deviceC);
+    cudaFree(deviceCRef);
     cublasDestroy(handle);
-
-    return 0;
-};
+}
