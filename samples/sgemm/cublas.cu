@@ -3,12 +3,13 @@
 
 #include <array>
 #include <iostream>
+#include <thread>
 #include <vector>
 
 #include "../cud_helper.hpp"
 
 int main() {
-    constexpr std::array SIZES{2048, 3072, 4096};
+    constexpr std::array SIZES{1024, 2048, 3072, 4096, 5120, 6144, 7168, 8192, 10240};
     constexpr int HEATUP_TIMES = 1;
     constexpr int PERF_TIMES = 3;
 
@@ -38,7 +39,7 @@ int main() {
         const float alpha = 1.0f;
         const float beta = 0.0f;
 
-        constexpr cublasGemmAlgo_t algo = CUBLAS_GEMM_AUTOTUNE;
+        constexpr cublasGemmAlgo_t algo = CUBLAS_GEMM_DEFAULT;
 
         for (int i = 0; i < HEATUP_TIMES; i++) {
             cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, deviceB, CUDA_R_32F,
@@ -48,7 +49,6 @@ int main() {
         }
 
         std::vector<float> elapsedTimes;
-        float elapsedTime = 0;
         for (int i = 0; i < PERF_TIMES; i++) {
             cudaEventRecord(evBegin);
             cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, deviceB, CUDA_R_32F,
@@ -56,6 +56,7 @@ int main() {
                          algo);
             cudaEventRecord(evEnd);
             cudaEventSynchronize(evEnd);
+            float elapsedTime;
             cudaEventElapsedTime(&elapsedTime, evBegin, evEnd);
             elapsedTimes.push_back(elapsedTime);
         }
@@ -64,9 +65,10 @@ int main() {
         const float macs = (float)M * N * K * 2;
         const float meanTflops = macs / meanTime / 1e9;
 
-        std::cout << "=============================" << std::endl;
-        std::cout << "Size: " << size << std::endl;
-        std::cout << "Performance: " << meanTflops << " tflops" << std::endl;
+        // std::cout << "=============================" << std::endl;
+        // std::cout << "Size: " << size << std::endl;
+        // std::cout << "Performance: " << meanTflops << " tflops" << std::endl;
+        std::cout << meanTflops << std::endl;
 
         cudaFree(deviceA);
         cudaFree(deviceB);
