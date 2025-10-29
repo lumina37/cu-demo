@@ -25,7 +25,7 @@ template <
     uint THREAD_SUBTILE_N = 8,
     uint THREAD_SUBTILE_K = 8
 >
-__global__ void sgemmSubTile(int M, int N, int K,
+__global__ void sgemmSubTile(uint M, uint N, uint K,
                              const float4* __restrict__ srcMatA,
                              const float4* __restrict__ srcMatB,
                              float4* __restrict__ dstMat) {
@@ -41,34 +41,32 @@ __global__ void sgemmSubTile(int M, int N, int K,
     __shared__ float4 sharedB[STAGES][BLOCK_TILE_K][BLOCK_TILE_VEC_N];
 
     // Thread indices
-    const int localIndex = threadIdx.y * blockDim.x + threadIdx.x;
-    const int groupThreadCount = blockDim.x * blockDim.y;
+    const uint localIndex = threadIdx.y * blockDim.x + threadIdx.x;
+    const uint groupThreadCount = blockDim.x * blockDim.y;
 
     // Accumulator registers
     float4 regAccumulator[THREAD_TILE_M][THREAD_TILE_VEC_N];
 
     // Zero-fill accumulator
 #pragma unroll
-    for (int iterTM = 0; iterTM < THREAD_TILE_M; iterTM++) {
+    for (uint iterTM = 0; iterTM < THREAD_TILE_M; iterTM++) {
 #pragma unroll
-        for (int iterVecTN = 0; iterVecTN < THREAD_TILE_VEC_N; iterVecTN++) {
+        for (uint iterVecTN = 0; iterVecTN < THREAD_TILE_VEC_N; iterVecTN++) {
             regAccumulator[iterTM][iterVecTN] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
         }
     }
 
-    // Helper lambda for loading global to shared memory
-    auto loadGlobalToShared = [&](int globalCoordX, int globalCoordY,
-                                  int globalExtentX, int globalExtentY,
-                                  int globalRowStride, bool loadA, uint stage) {
-        const int loadsPerThread = (globalExtentX * globalExtentY) / groupThreadCount;
+    auto loadGlobalToShared = [&](uint globalCoordX, uint globalCoordY, uint globalExtentX, uint globalExtentY,
+                                  uint globalRowStride, bool loadA, uint stage) {
+        const uint loadsPerThread = (globalExtentX * globalExtentY) / groupThreadCount;
 
-        for (int i = 0; i < loadsPerThread; i++) {
-            const int linearIdx = i * groupThreadCount + localIndex;
-            const int srcOffsetX = linearIdx % globalExtentX;
-            const int srcOffsetY = linearIdx / globalExtentX;
-            const int srcCoordX = globalCoordX + srcOffsetX;
-            const int srcCoordY = globalCoordY + srcOffsetY;
-            const int srcIndex = srcCoordY * globalRowStride + srcCoordX;
+        for (uint i = 0; i < loadsPerThread; i++) {
+            const uint linearIdx = i * groupThreadCount + localIndex;
+            const uint srcOffsetX = linearIdx % globalExtentX;
+            const uint srcOffsetY = linearIdx / globalExtentX;
+            const uint srcCoordX = globalCoordX + srcOffsetX;
+            const uint srcCoordY = globalCoordY + srcOffsetY;
+            const uint srcIndex = srcCoordY * globalRowStride + srcCoordX;
 
             if (loadA) {
                 sharedA[stage][srcOffsetY][srcOffsetX] = srcMatA[srcIndex];
@@ -79,43 +77,43 @@ __global__ void sgemmSubTile(int M, int N, int K,
     };
 
     // Main loop over K dimension
-    const int blockBaseM = blockIdx.y * BLOCK_TILE_M;
-    const int blockBaseVecN = blockIdx.x * BLOCK_TILE_VEC_N;
+    const uint blockBaseM = blockIdx.y * BLOCK_TILE_M;
+    const uint blockBaseVecN = blockIdx.x * BLOCK_TILE_VEC_N;
 
     auto computeSubThreadTile = [&](uint iterTM, uint iterVecTN, uint stage) {
         float4 regA[THREAD_SUBTILE_VEC_K];
         float4 regB[THREAD_SUBTILE_K][THREAD_SUBTILE_VEC_N];
 
 #pragma unroll
-        for (int iterBK = 0; iterBK < BLOCK_TILE_K; iterBK += THREAD_TILE_K) {
+        for (uint iterBK = 0; iterBK < BLOCK_TILE_K; iterBK += THREAD_TILE_K) {
 #pragma unroll
-            for (int iterTK = 0; iterTK < THREAD_TILE_K; iterTK += THREAD_SUBTILE_K) {
+            for (uint iterTK = 0; iterTK < THREAD_TILE_K; iterTK += THREAD_SUBTILE_K) {
 #pragma unroll
-                for (int iterSubTK = 0; iterSubTK < THREAD_SUBTILE_K; iterSubTK++) {
-                    const int sharedCoordKB = iterBK + iterTK + iterSubTK;
+                for (uint iterSubTK = 0; iterSubTK < THREAD_SUBTILE_K; iterSubTK++) {
+                    const uint sharedCoordKB = iterBK + iterTK + iterSubTK;
 #pragma unroll
-                    for (int iterVecSubTN = 0; iterVecSubTN < THREAD_SUBTILE_VEC_N; iterVecSubTN++) {
-                        const int sharedCoordVecNB = (iterVecTN + iterVecSubTN) * blockDim.x + threadIdx.x;
+                    for (uint iterVecSubTN = 0; iterVecSubTN < THREAD_SUBTILE_VEC_N; iterVecSubTN++) {
+                        const uint sharedCoordVecNB = (iterVecTN + iterVecSubTN) * blockDim.x + threadIdx.x;
                         regB[iterSubTK][iterVecSubTN] = sharedB[stage][sharedCoordKB][sharedCoordVecNB];
                     }
                 }
 
 #pragma unroll
-                for (int iterSubTM = 0; iterSubTM < THREAD_SUBTILE_M; iterSubTM++) {
-                    const int regCoordM = iterTM + iterSubTM;
-                    const int sharedCoordMA = (iterTM + iterSubTM) * blockDim.y + threadIdx.y;
+                for (uint iterSubTM = 0; iterSubTM < THREAD_SUBTILE_M; iterSubTM++) {
+                    const uint regCoordM = iterTM + iterSubTM;
+                    const uint sharedCoordMA = (iterTM + iterSubTM) * blockDim.y + threadIdx.y;
 #pragma unroll
-                    for (int iterVecSubTK = 0; iterVecSubTK < THREAD_SUBTILE_VEC_K; iterVecSubTK++) {
-                        const int sharedCoordVecKA = (iterBK + iterTK) / 4 + iterVecSubTK;
+                    for (uint iterVecSubTK = 0; iterVecSubTK < THREAD_SUBTILE_VEC_K; iterVecSubTK++) {
+                        const uint sharedCoordVecKA = (iterBK + iterTK) / 4 + iterVecSubTK;
                         regA[iterVecSubTK] = sharedA[stage][sharedCoordMA][sharedCoordVecKA];
                     }
 
 #pragma unroll
-                    for (int iterVecSubTN = 0; iterVecSubTN < THREAD_SUBTILE_VEC_N; iterVecSubTN++) {
-                        const int regCoordVecN = iterVecTN + iterVecSubTN;
+                    for (uint iterVecSubTN = 0; iterVecSubTN < THREAD_SUBTILE_VEC_N; iterVecSubTN++) {
+                        const uint regCoordVecN = iterVecTN + iterVecSubTN;
 #pragma unroll
-                        for (int iterVecSubTK = 0; iterVecSubTK < THREAD_SUBTILE_VEC_K; iterVecSubTK++) {
-                            const int regBaseKB = iterVecSubTK * 4;
+                        for (uint iterVecSubTK = 0; iterVecSubTK < THREAD_SUBTILE_VEC_K; iterVecSubTK++) {
+                            const uint regBaseKB = iterVecSubTK * 4;
 
                             regAccumulator[regCoordM][regCoordVecN].x += regA[iterVecSubTK].x * regB[
                                 regBaseKB + 0][iterVecSubTN].x;
@@ -161,9 +159,9 @@ __global__ void sgemmSubTile(int M, int N, int K,
 
     auto computeWithShared = [&](uint stage) {
 #pragma unroll
-        for (int iterTM = 0; iterTM < THREAD_TILE_M; iterTM += THREAD_SUBTILE_M) {
+        for (uint iterTM = 0; iterTM < THREAD_TILE_M; iterTM += THREAD_SUBTILE_M) {
 #pragma unroll
-            for (int iterVecTN = 0; iterVecTN < THREAD_TILE_VEC_N; iterVecTN += THREAD_SUBTILE_VEC_N) {
+            for (uint iterVecTN = 0; iterVecTN < THREAD_TILE_VEC_N; iterVecTN += THREAD_SUBTILE_VEC_N) {
                 computeSubThreadTile(iterTM, iterVecTN, stage);
             }
         }
@@ -175,7 +173,7 @@ __global__ void sgemmSubTile(int M, int N, int K,
     __syncthreads();
 
 #pragma unroll
-    for (int iterK = BLOCK_TILE_K; iterK < K; iterK += BLOCK_TILE_K) {
+    for (uint iterK = BLOCK_TILE_K; iterK < K; iterK += BLOCK_TILE_K) {
         const uint nextStage = (stage + 1) % STAGES;
 
         loadGlobalToShared(iterK / 4, blockBaseM, BLOCK_TILE_VEC_K, BLOCK_TILE_M, K / 4, true, nextStage);
@@ -190,16 +188,16 @@ __global__ void sgemmSubTile(int M, int N, int K,
     computeWithShared(stage);
 
     // Store results to global memory
-    const int globalBaseM = blockIdx.y * BLOCK_TILE_M + threadIdx.y;
-    const int globalBaseVecN = blockIdx.x * BLOCK_TILE_VEC_N + threadIdx.x;
+    const uint globalBaseM = blockIdx.y * BLOCK_TILE_M + threadIdx.y;
+    const uint globalBaseVecN = blockIdx.x * BLOCK_TILE_VEC_N + threadIdx.x;
 
 #pragma unroll
-    for (int iterTM = 0; iterTM < THREAD_TILE_M; iterTM++) {
+    for (uint iterTM = 0; iterTM < THREAD_TILE_M; iterTM++) {
 #pragma unroll
-        for (int iterVecTN = 0; iterVecTN < THREAD_TILE_VEC_N; iterVecTN++) {
-            const int globalCoordM = globalBaseM + iterTM * blockDim.y;
-            const int globalCoordVecN = globalBaseVecN + iterVecTN * blockDim.x;
-            const int dstIdx = globalCoordM * (N / 4) + globalCoordVecN;
+        for (uint iterVecTN = 0; iterVecTN < THREAD_TILE_VEC_N; iterVecTN++) {
+            const uint globalCoordM = globalBaseM + iterTM * blockDim.y;
+            const uint globalCoordVecN = globalBaseVecN + iterVecTN * blockDim.x;
+            const uint dstIdx = globalCoordM * (N / 4) + globalCoordVecN;
             dstMat[dstIdx] = regAccumulator[iterTM][iterVecTN];
         }
     }
@@ -219,14 +217,14 @@ void runCublas(cublasHandle_t handle, int M, int N, int K, float alpha,
 
 void runMySgemm(int M, int N, int K, float* A, float* B, float* C) {
     constexpr uint32_t BM = 128;
-    constexpr uint32_t BN = 64;
+    constexpr uint32_t BN = 128;
     constexpr uint32_t BK = 16;
-    constexpr uint32_t TM = 8;
+    constexpr uint32_t TM = 16;
     constexpr uint32_t TN = 8;
-    constexpr uint32_t TK = 4;
-    constexpr uint32_t STM = 4;
+    constexpr uint32_t TK = 16;
+    constexpr uint32_t STM = 16;
     constexpr uint32_t STN = 8;
-    constexpr uint32_t STK = 4;
+    constexpr uint32_t STK = 8;
     dim3 gridDim(N / BN, M / BM);
     dim3 blockDim(BN / TN, BM / TM);
     sgemmSubTile<BM, BN, BK, TM, TN, TK, STM, STN, STK> <<<gridDim, blockDim>>>(

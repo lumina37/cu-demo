@@ -10,4 +10,4 @@ endfunction()
 
 cud_add_sample(cud-bin-sgemm-cublas sgemm/cublas.cu)
 cud_add_sample(cud-bin-sgemm-cublaslt sgemm/cublaslt.cu)
-cud_add_sample(cud-bin-sgemm-simt-v6-sub-thread-tile sgemm/simt/v6-sub-thread-tile.cu)
+cud_add_sample(cud-bin-sgemm-simt-v7-double-buffer sgemm/simt/v7-double-buffer.cu)
