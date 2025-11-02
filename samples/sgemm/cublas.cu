@@ -6,8 +6,6 @@
 #include <cuda_runtime.h>
 #include <cutlass/gemm/device/gemm.h>
 #include <cutlass/util/host_tensor.h>
-#include <cutlass/util/reference/device/gemm.h>
-#include <cutlass/util/reference/host/tensor_compare.h>
 #include <cutlass/util/reference/host/tensor_fill.h>
 
 #include "../cud_helper.hpp"

@@ -1,15 +1,17 @@
 ﻿#pragma once
 
 #include <cassert>
-#include <cstdio>
 #include <array>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
 #include <random>
 
-#include <cublas_v2.h>
 #include <cuda_runtime.h>
+#include <cutlass/gemm/device/gemm.h>
+#include <cutlass/util/host_tensor.h>
+#include <cutlass/util/reference/host/tensor_fill.h>
+#include <cutlass/util/reference/device/gemm.h>
 
 #include "../../cud_helper.hpp"
 
@@ -204,19 +206,12 @@ __global__ void sgemmSubTile(uint M, uint N, uint K,
     }
 }
 
+using TTensor = cutlass::HostTensor<float, cutlass::layout::RowMajor>;
+using TView = cutlass::TensorView<float, cutlass::layout::RowMajor>;
 
-void runCublas(cublasHandle_t handle, int M, int N, int K, float alpha,
-               float* A, float* B, float beta, float* C) {
-    // cuBLAS uses column-major order. So we change the order of our row-major A &
-    // B, since (B^T*A^T)^T = (A*B)
-    // This runs cuBLAS in full fp32 mode
-    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_32F,
-                 N, A, CUDA_R_32F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F,
-                 CUBLAS_GEMM_DEFAULT_TENSOR_OP);
-}
-
-
-void runMySgemm(int M, int N, int K, float* A, float* B, float* C) {
+void sgemmHelper(const cutlass::gemm::GemmCoord& problemSize, TTensor& tensorA,
+                 TTensor& tensorB,
+                 TTensor& tensorC) {
     constexpr uint32_t BM = 128;
     constexpr uint32_t BN = 128;
     constexpr uint32_t BK = 16;
@@ -226,19 +221,12 @@ void runMySgemm(int M, int N, int K, float* A, float* B, float* C) {
     constexpr uint32_t STM = 16;
     constexpr uint32_t STN = 8;
     constexpr uint32_t STK = 8;
-    dim3 gridDim(N / BN, M / BM);
+    dim3 gridDim(problemSize.n() / BN, problemSize.m() / BM);
     dim3 blockDim(BN / TN, BM / TM);
     sgemmSubTile<BM, BN, BK, TM, TN, TK, STM, STN, STK> <<<gridDim, blockDim>>>(
-        M, N, K, (float4*)A, (float4*)B, (float4*)C);
-}
-
-void randomizeMat(float* mat, int N) {
-    std::mt19937 rdEngine;
-    rdEngine.seed(37);
-    std::uniform_real_distribution dist(0.0f, 1.0f);
-    for (int i = 0; i < N; i++) {
-        mat[i] = dist(rdEngine);
-    }
+        problemSize.m(), problemSize.n(), problemSize.k(), reinterpret_cast<float4*>(tensorA.device_data()),
+        reinterpret_cast<float4*>(tensorB.device_data()),
+        reinterpret_cast<float4*>(tensorC.device_data()));
 }
 
 bool verifyMat(float* matRef, float* matOut, int N) {
@@ -247,7 +235,7 @@ bool verifyMat(float* matRef, float* matOut, int N) {
     for (i = 0; i < N; i++) {
         diff = std::fabs(matRef[i] - matOut[i]);
         if (isnan(diff) || diff > 0.01) {
-            printf("expect %5.2f, get %5.2f at %d\n", matRef[i], matOut[i], i);
+            std::cout << "expect " << matRef[i] << ", got " << matOut[i] << " at " << i << std::endl;
             return false;
         }
     }
@@ -255,49 +243,52 @@ bool verifyMat(float* matRef, float* matOut, int N) {
 }
 
 int main() {
-    cublasHandle_t handle;
-    cublasCreate(&handle);
+    cutlass::reference::device::Gemm<float,
+                                     cutlass::layout::RowMajor,
+                                     float,
+                                     cutlass::layout::RowMajor,
+                                     float,
+                                     cutlass::layout::RowMajor,
+                                     float,
+                                     float> gemmRefOp;
 
     cudaEvent_t evBegin, evEnd;
     cudaEventCreate(&evBegin);
     cudaEventCreate(&evEnd);
 
-    constexpr std::array SIZES{2048, 3072, 4096};
-
-    int M, N, K;
-    const int maxSize = SIZES.back();
-
-    const float alpha = 1.0, beta = 0.0;
-
-    float *deviceA = nullptr, *deviceB = nullptr, *deviceC = nullptr, *deviceCRef = nullptr;
-
-    std::vector<float> hostA(maxSize * maxSize);
-    std::vector<float> hostB(maxSize * maxSize);
-    std::vector<float> hostC(maxSize * maxSize);
-    std::vector<float> hostCRef(maxSize * maxSize);
-
-    randomizeMat(hostA.data(), maxSize * maxSize);
-    randomizeMat(hostB.data(), maxSize * maxSize);
-
-    cudaMalloc(&deviceA, sizeof(float) * maxSize * maxSize);
-    cudaMalloc(&deviceB, sizeof(float) * maxSize * maxSize);
-    cudaMalloc(&deviceC, sizeof(float) * maxSize * maxSize);
-    cudaMalloc(&deviceCRef, sizeof(float) * maxSize * maxSize);
-
-    cudaMemcpy(deviceA, hostA.data(), sizeof(float) * maxSize * maxSize, cudaMemcpyHostToDevice);
-    cudaMemcpy(deviceB, hostB.data(), sizeof(float) * maxSize * maxSize, cudaMemcpyHostToDevice);
+    constexpr std::array SIZES{1024, 2048, 3072, 4096, 5120};
 
     const int PERF_TIMES = 3;
     for (const int size : SIZES) {
-        M = N = K = size;
-        runCublas(handle, M, N, K, alpha, deviceA, deviceB, beta, deviceCRef);
-        runMySgemm(M, N, K, deviceA, deviceB, deviceC);
+        cutlass::gemm::GemmCoord problemSize(size, size, size);
+
+        TTensor tensorA(problemSize.mk());
+        TTensor tensorB(problemSize.kn());
+        TTensor tensorC(problemSize.mn());
+        TTensor tensorCRef(problemSize.mn());
+
+        cutlass::reference::host::TensorFillRandomUniform(tensorA.host_view(), 42, 1.f, 0.f);
+        cutlass::reference::host::TensorFillRandomUniform(tensorB.host_view(), 42, 1.f, 0.f);
+
+        tensorA.sync_device();
+        tensorB.sync_device();
+
+        gemmRefOp(problemSize,
+                  1.f,
+                  tensorA.device_ref(),
+                  tensorB.device_ref(),
+                  0.f,
+                  tensorCRef.device_ref(),
+                  tensorCRef.device_ref());
         cudaDeviceSynchronize();
 
-        cudaMemcpy(hostC.data(), deviceC, sizeof(float) * M * N, cudaMemcpyDeviceToHost);
-        cudaMemcpy(hostCRef.data(), deviceCRef, sizeof(float) * M * N, cudaMemcpyDeviceToHost);
+        sgemmHelper(problemSize, tensorA, tensorB, tensorC);
+        cudaDeviceSynchronize();
 
-        if (!verifyMat(hostCRef.data(), hostC.data(), M * N)) {
+        tensorC.sync_host();
+        tensorCRef.sync_host();
+
+        if (!verifyMat(tensorCRef.host_data(), tensorC.host_data(), problemSize.m() * problemSize.n())) {
             std::cout << "verification failed" << std::endl;
             exit(EXIT_FAILURE);
         }
@@ -305,27 +296,24 @@ int main() {
         std::vector<float> elapsedTimes;
         for (int i = 0; i < PERF_TIMES; i++) {
             cudaEventRecord(evBegin);
-            runMySgemm(M, N, K, deviceA, deviceB, deviceC);
+
+            sgemmHelper(problemSize, tensorA, tensorB, tensorC);
+
             cudaEventRecord(evEnd);
             cudaEventSynchronize(evEnd);
+
             float elapsedTime;
             cudaEventElapsedTime(&elapsedTime, evBegin, evEnd);
+
             elapsedTimes.push_back(elapsedTime);
         }
 
         const auto [meanTime, stdTime] = meanStd(elapsedTimes);
-        const float macs = (float)M * N * K * 2;
+        const float macs = (float)size * size * size * 2;
         const float meanTflops = macs / meanTime / 1e9;
 
         std::cout << "=============================" << std::endl;
         std::cout << "Size: " << size << std::endl;
         std::cout << "Performance: " << meanTflops << " tflops" << std::endl;
     }
-
-    // Free up CPU and GPU space
-    cudaFree(deviceA);
-    cudaFree(deviceB);
-    cudaFree(deviceC);
-    cudaFree(deviceCRef);
-    cublasDestroy(handle);
 }
