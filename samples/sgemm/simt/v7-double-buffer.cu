@@ -1,14 +1,15 @@
 ﻿#pragma once
 
 #include <cassert>
-#include <cuda_runtime.h>
 #include <cstdio>
 #include <array>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
-#include <cublas_v2.h>
 #include <random>
+
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
 
 #include "../../cud_helper.hpp"
 
