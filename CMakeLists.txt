@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
+cmake_policy(SET CMP0104 NEW)
+set(CMAKE_OBJECT_PATH_MAX 1024)
+
 project(CUDADemo
         VERSION 0.0.1
         DESCRIPTION "CUDA demo"
@@ -8,12 +11,18 @@ project(CUDADemo
 
 # Options
 option(CUD_ENABLE_TESTS "Enable tests" OFF)
-option(CUD_VERBOSE_WARNING "Show verbose compiler warnings" OFF)
 
 # Dependencies
 include(FetchContent)
 
-find_package(CUDAToolkit)
+set(CUTLASS_ENABLE_CUBLAS ON CACHE BOOL "" FORCE)
+set(CUTLASS_NVCC_ARCHS ${CMAKE_CUDA_ARCHITECTURES} CACHE STRING "" FORCE)
+FetchContent_Declare(
+        cutlass
+        GIT_REPOSITORY https://github.com/NVIDIA/cutlass.git
+        GIT_TAG v4.2.1
+)
+FetchContent_MakeAvailable(cutlass)
 
 if (CUD_ENABLE_TESTS)
     include(CTest)

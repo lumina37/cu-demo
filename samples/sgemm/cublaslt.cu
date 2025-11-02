@@ -1,9 +1,11 @@
-﻿#include <cublasLt.h>
-#include <cuda_runtime.h>
-
-#include <array>
+﻿#include <array>
 #include <iostream>
 #include <vector>
+
+#include <cublasLt.h>
+#include <cuda_runtime.h>
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
 
 #include "../cud_helper.hpp"
 

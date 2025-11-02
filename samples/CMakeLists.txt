@@ -5,6 +5,7 @@ function(cud_add_sample name src)
 
     set_target_properties(${name} PROPERTIES
             CUDA_SEPARABLE_COMPILATION ON
+            CUDA_ARCHITECTURES native
     )
 endfunction()
 

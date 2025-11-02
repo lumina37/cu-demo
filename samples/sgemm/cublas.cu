@@ -1,10 +1,16 @@
-﻿#include <cublas_v2.h>
-#include <cuda_runtime.h>
-
-#include <array>
+﻿#include <array>
 #include <iostream>
-#include <thread>
 #include <vector>
+
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+#include "cutlass/cutlass.h"
+#include "cutlass/gemm/device/gemm.h"
+#include "cutlass/util/host_tensor.h"
+#include "cutlass/util/reference/device/gemm.h"
+#include "cutlass/util/reference/host/tensor_compare.h"
+#include "cutlass/util/reference/host/tensor_copy.h"
+#include "cutlass/util/reference/host/tensor_fill.h"
 
 #include "../cud_helper.hpp"
 
@@ -21,20 +27,17 @@ int main() {
     cudaEventCreate(&evEnd);
 
     for (const int size : SIZES) {
-        const int M = size;
-        const int N = size;
-        const int K = size;
+        cutlass::gemm::GemmCoord gemmCoord(size, size, size);
 
-        float *deviceA, *deviceB, *deviceC;
-        cudaMalloc(&deviceA, M * K * sizeof(float));
-        cudaMalloc(&deviceB, K * N * sizeof(float));
-        cudaMalloc(&deviceC, M * N * sizeof(float));
+        cutlass::HostTensor<float, cutlass::layout::RowMajor> deviceA(gemmCoord.mk());
+        cutlass::HostTensor<float, cutlass::layout::RowMajor> deviceB(gemmCoord.kn());
+        cutlass::HostTensor<float, cutlass::layout::RowMajor> deviceC(gemmCoord.mn());
 
-        std::vector hostA(M * K, 1.0f);
-        std::vector hostB(K * N, 2.0f);
+        cutlass::reference::host::TensorFillRandomUniform(deviceA.host_view(), 42, 1.f, 0.f, 0);
+        cutlass::reference::host::TensorFillRandomUniform(deviceB.host_view(), 42, 1.f, 0.f, 0);
 
-        cudaMemcpy(deviceA, hostA.data(), M * K * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(deviceB, hostB.data(), K * N * sizeof(float), cudaMemcpyHostToDevice);
+        deviceA.sync_device();
+        deviceB.sync_device();
 
         const float alpha = 1.0f;
         const float beta = 0.0f;
@@ -42,8 +45,12 @@ int main() {
         constexpr cublasGemmAlgo_t algo = CUBLAS_GEMM_DEFAULT;
 
         for (int i = 0; i < HEATUP_TIMES; i++) {
-            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, deviceB, CUDA_R_32F,
-                         N, deviceA, CUDA_R_32F, K, &beta, deviceC, CUDA_R_32F, N, CUBLAS_COMPUTE_32F,
+            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, gemmCoord.n(), gemmCoord.m(), gemmCoord.k(), &alpha,
+                         deviceB.device_data(),
+                         CUDA_R_32F,
+                         gemmCoord.n(), deviceA.device_data(), CUDA_R_32F, gemmCoord.k(), &beta, deviceC.device_data(),
+                         CUDA_R_32F, gemmCoord.n(),
+                         CUBLAS_COMPUTE_32F,
                          algo);
             cudaDeviceSynchronize();
         }
@@ -51,8 +58,12 @@ int main() {
         std::vector<float> elapsedTimes;
         for (int i = 0; i < PERF_TIMES; i++) {
             cudaEventRecord(evBegin);
-            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, deviceB, CUDA_R_32F,
-                         N, deviceA, CUDA_R_32F, K, &beta, deviceC, CUDA_R_32F, N, CUBLAS_COMPUTE_32F,
+            cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, gemmCoord.n(), gemmCoord.m(), gemmCoord.k(), &alpha,
+                         deviceB.device_data(),
+                         CUDA_R_32F,
+                         gemmCoord.n(), deviceA.device_data(), CUDA_R_32F, gemmCoord.k(), &beta, deviceC.device_data(),
+                         CUDA_R_32F, gemmCoord.n(),
+                         CUBLAS_COMPUTE_32F,
                          algo);
             cudaEventRecord(evEnd);
             cudaEventSynchronize(evEnd);
@@ -62,17 +73,13 @@ int main() {
         }
 
         const auto [meanTime, stdTime] = meanStd(elapsedTimes);
-        const float macs = (float)M * N * K * 2;
+        const float macs = (float)size * size * size * 2;
         const float meanTflops = macs / meanTime / 1e9;
 
         // std::cout << "=============================" << std::endl;
         // std::cout << "Size: " << size << std::endl;
         // std::cout << "Performance: " << meanTflops << " tflops" << std::endl;
         std::cout << meanTflops << std::endl;
-
-        cudaFree(deviceA);
-        cudaFree(deviceB);
-        cudaFree(deviceC);
     }
 
     cudaEventDestroy(evBegin);
