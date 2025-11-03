@@ -1,29 +1,5 @@
 #pragma once
 
-#include <chrono>
-#include <utility>
-
-namespace fs = std::filesystem;
-
-#define CHECK_CUDA(call)                                                                                     \
-    do {                                                                                                     \
-        cudaError_t err = call;                                                                              \
-        if (err != cudaSuccess) {                                                                            \
-            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << " - " << cudaGetErrorString(err) \
-                      << std::endl;                                                                          \
-            exit(EXIT_FAILURE);                                                                              \
-        }                                                                                                    \
-    } while (0)
-
-#define CHECK_CUBLAS(call)                                                                                  \
-    do {                                                                                                    \
-        cublasStatus_t status = call;                                                                       \
-        if (status != CUBLAS_STATUS_SUCCESS) {                                                              \
-            std::cerr << "cuBLAS error at " << __FILE__ << ":" << __LINE__ << " - " << status << std::endl; \
-            exit(EXIT_FAILURE);                                                                             \
-        }                                                                                                   \
-    } while (0)
-
 std::pair<float, float> meanStd(const std::vector<float>& data) {
     float mean = 0.0;
     float acc2 = 0.0;

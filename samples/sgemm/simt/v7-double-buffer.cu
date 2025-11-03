@@ -1,6 +1,4 @@
-﻿#pragma once
-
-#include <cassert>
+﻿#include <cassert>
 #include <array>
 #include <cstdlib>
 #include <iostream>
