@@ -17,6 +17,13 @@
 
 using uint = unsigned int;
 
+__device__ inline void fma(float4 a, float b, float4& c) {
+    c = make_float4(__fmaf_rn(a.x, b, c.x),
+                    __fmaf_rn(a.y, b, c.y),
+                    __fmaf_rn(a.z, b, c.z),
+                    __fmaf_rn(a.w, b, c.w));
+}
+
 template <
     uint BLOCK_TILE_M = 128,
     uint BLOCK_TILE_N = 128,
@@ -59,8 +66,8 @@ __global__ void sgemmSubTile(uint M, uint N, uint K,
         }
     }
 
-    auto loadGlobalToShared = [&](uint globalCoordX, uint globalCoordY, uint globalExtentX, uint globalExtentY,
-                                  uint globalRowStride, bool loadA, uint stage) {
+    const auto loadGlobalToShared = [&](uint globalCoordX, uint globalCoordY, uint globalExtentX, uint globalExtentY,
+                                        uint globalRowStride, bool loadA, uint stage) {
         const uint loadsPerThread = (globalExtentX * globalExtentY) / groupThreadCount;
 
         for (uint i = 0; i < loadsPerThread; i++) {
@@ -83,7 +90,7 @@ __global__ void sgemmSubTile(uint M, uint N, uint K,
     const uint blockBaseM = blockIdx.y * BLOCK_TILE_M;
     const uint blockBaseVecN = blockIdx.x * BLOCK_TILE_VEC_N;
 
-    auto computeSubThreadTile = [&](uint iterTM, uint iterVecTN, uint stage) {
+    const auto computeSubThreadTile = [&](uint iterTM, uint iterVecTN, uint stage) {
         float4 regA[THREAD_SUBTILE_VEC_K];
         float4 regB[THREAD_SUBTILE_K][THREAD_SUBTILE_VEC_N];
 
@@ -118,41 +125,14 @@ __global__ void sgemmSubTile(uint M, uint N, uint K,
                         for (uint iterVecSubTK = 0; iterVecSubTK < THREAD_SUBTILE_VEC_K; iterVecSubTK++) {
                             const uint regBaseKB = iterVecSubTK * 4;
 
-                            regAccumulator[regCoordM][regCoordVecN].x += regA[iterVecSubTK].x * regB[
-                                regBaseKB + 0][iterVecSubTN].x;
-                            regAccumulator[regCoordM][regCoordVecN].y += regA[iterVecSubTK].x * regB[
-                                regBaseKB + 0][iterVecSubTN].y;
-                            regAccumulator[regCoordM][regCoordVecN].z += regA[iterVecSubTK].x * regB[
-                                regBaseKB + 0][iterVecSubTN].z;
-                            regAccumulator[regCoordM][regCoordVecN].w += regA[iterVecSubTK].x * regB[
-                                regBaseKB + 0][iterVecSubTN].w;
-
-                            regAccumulator[regCoordM][regCoordVecN].x += regA[iterVecSubTK].y * regB[
-                                regBaseKB + 1][iterVecSubTN].x;
-                            regAccumulator[regCoordM][regCoordVecN].y += regA[iterVecSubTK].y * regB[
-                                regBaseKB + 1][iterVecSubTN].y;
-                            regAccumulator[regCoordM][regCoordVecN].z += regA[iterVecSubTK].y * regB[
-                                regBaseKB + 1][iterVecSubTN].z;
-                            regAccumulator[regCoordM][regCoordVecN].w += regA[iterVecSubTK].y * regB[
-                                regBaseKB + 1][iterVecSubTN].w;
-
-                            regAccumulator[regCoordM][regCoordVecN].x += regA[iterVecSubTK].z * regB[
-                                regBaseKB + 2][iterVecSubTN].x;
-                            regAccumulator[regCoordM][regCoordVecN].y += regA[iterVecSubTK].z * regB[
-                                regBaseKB + 2][iterVecSubTN].y;
-                            regAccumulator[regCoordM][regCoordVecN].z += regA[iterVecSubTK].z * regB[
-                                regBaseKB + 2][iterVecSubTN].z;
-                            regAccumulator[regCoordM][regCoordVecN].w += regA[iterVecSubTK].z * regB[
-                                regBaseKB + 2][iterVecSubTN].w;
-
-                            regAccumulator[regCoordM][regCoordVecN].x += regA[iterVecSubTK].w * regB[
-                                regBaseKB + 3][iterVecSubTN].x;
-                            regAccumulator[regCoordM][regCoordVecN].y += regA[iterVecSubTK].w * regB[
-                                regBaseKB + 3][iterVecSubTN].y;
-                            regAccumulator[regCoordM][regCoordVecN].z += regA[iterVecSubTK].w * regB[
-                                regBaseKB + 3][iterVecSubTN].z;
-                            regAccumulator[regCoordM][regCoordVecN].w += regA[iterVecSubTK].w * regB[
-                                regBaseKB + 3][iterVecSubTN].w;
+                            fma(regB[regBaseKB + 0][iterVecSubTN], regA[iterVecSubTK].x,
+                                regAccumulator[regCoordM][regCoordVecN]);
+                            fma(regB[regBaseKB + 1][iterVecSubTN], regA[iterVecSubTK].y,
+                                regAccumulator[regCoordM][regCoordVecN]);
+                            fma(regB[regBaseKB + 2][iterVecSubTN], regA[iterVecSubTK].z,
+                                regAccumulator[regCoordM][regCoordVecN]);
+                            fma(regB[regBaseKB + 3][iterVecSubTN], regA[iterVecSubTK].w,
+                                regAccumulator[regCoordM][regCoordVecN]);
                         }
                     }
                 }
@@ -256,7 +236,7 @@ int main() {
     cudaEventCreate(&evBegin);
     cudaEventCreate(&evEnd);
 
-    constexpr std::array SIZES{1024, 2048, 3072, 4096, 5120};
+    constexpr std::array SIZES{1024, 2048, 3072, 4096};
 
     const int PERF_TIMES = 3;
     for (const int size : SIZES) {
